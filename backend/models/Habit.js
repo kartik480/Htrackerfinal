@@ -52,6 +52,31 @@ const habitSchema = new mongoose.Schema({
   startDate: {
     type: Date,
     default: Date.now
+  },
+  // Enhanced reminder system
+  reminder: {
+    enabled: {
+      type: Boolean,
+      default: false
+    },
+    startTime: {
+      type: String, // HH:MM format
+      default: '09:00'
+    },
+    endTime: {
+      type: String, // HH:MM format
+      default: '21:00'
+    },
+    frequency: {
+      type: String,
+      enum: ['once', 'hourly', 'every-2-hours', 'every-4-hours'],
+      default: 'once'
+    },
+    message: {
+      type: String,
+      default: 'Time to work on your habit!',
+      maxlength: [200, 'Reminder message cannot exceed 200 characters']
+    }
   }
 }, {
   timestamps: true
@@ -61,5 +86,6 @@ const habitSchema = new mongoose.Schema({
 habitSchema.index({ user: 1, isActive: 1 });
 habitSchema.index({ user: 1, category: 1 });
 habitSchema.index({ user: 1, startDate: -1 });
+habitSchema.index({ user: 1, 'reminder.enabled': 1 });
 
 module.exports = mongoose.model('Habit', habitSchema);

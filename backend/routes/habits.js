@@ -151,10 +151,21 @@ router.post('/', [
   body('reminder.enabled')
     .optional()
     .isBoolean(),
-  body('reminder.time')
+  body('reminder.startTime')
     .optional()
     .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
-    .withMessage('Reminder time must be in HH:MM format')
+    .withMessage('Reminder start time must be in HH:MM format'),
+  body('reminder.endTime')
+    .optional()
+    .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
+    .withMessage('Reminder end time must be in HH:MM format'),
+  body('reminder.frequency')
+    .optional()
+    .isIn(['once', 'hourly', 'every-2-hours', 'every-4-hours']),
+  body('reminder.message')
+    .optional()
+    .isLength({ max: 200 })
+    .withMessage('Reminder message cannot exceed 200 characters')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -206,7 +217,25 @@ router.put('/:id', [
   body('color')
     .optional()
     .matches(/^#[0-9A-F]{6}$/i)
-    .withMessage('Color must be a valid hex color')
+    .withMessage('Color must be a valid hex color'),
+  body('reminder.enabled')
+    .optional()
+    .isBoolean(),
+  body('reminder.startTime')
+    .optional()
+    .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
+    .withMessage('Reminder start time must be in HH:MM format'),
+  body('reminder.endTime')
+    .optional()
+    .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
+    .withMessage('Reminder end time must be in HH:MM format'),
+  body('reminder.frequency')
+    .optional()
+    .isIn(['once', 'hourly', 'every-2-hours', 'every-4-hours']),
+  body('reminder.message')
+    .optional()
+    .isLength({ max: 200 })
+    .withMessage('Reminder message cannot exceed 200 characters')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);

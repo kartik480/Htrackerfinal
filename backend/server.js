@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const http = require('http');
 const socketIo = require('socket.io');
+const { body, validationResult } = require('express-validator');
 require('dotenv').config();
 
 const app = express();
@@ -186,12 +187,19 @@ const habitSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   name: { type: String, required: true },
   description: String,
-  category: { type: String, default: 'General' },
+  category: { type: String, default: 'general' },
   frequency: { type: String, default: 'daily' },
   target: { type: Number, default: 1 },
   unit: String,
   color: { type: String, default: '#3B82F6' },
-  reminder: Boolean,
+  // Enhanced reminder system
+  reminder: {
+    enabled: { type: Boolean, default: false },
+    startTime: { type: String, default: '09:00' }, // HH:MM format
+    endTime: { type: String, default: '21:00' }, // HH:MM format
+    frequency: { type: String, enum: ['once', 'hourly', 'every-2-hours', 'every-4-hours'], default: 'once' },
+    message: { type: String, default: 'Time to work on your habit!', maxlength: 200 }
+  },
   startDate: { type: Date, default: Date.now },
   isActive: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now }
@@ -244,8 +252,57 @@ app.get('/api/habits', authenticateToken, async (req, res) => {
   }
 });
 
-app.post('/api/habits', authenticateToken, async (req, res) => {
+app.post('/api/habits', [
+  authenticateToken,
+  body('name')
+    .notEmpty()
+    .withMessage('Habit name is required')
+    .isLength({ max: 100 })
+    .withMessage('Habit name cannot exceed 100 characters'),
+  body('description')
+    .optional()
+    .isLength({ max: 500 })
+    .withMessage('Description cannot exceed 500 characters'),
+  body('category')
+    .optional()
+    .isIn(['health', 'fitness', 'learning', 'productivity', 'mindfulness', 'social', 'other', 'general']),
+  body('frequency')
+    .optional()
+    .isIn(['daily', 'weekly', 'monthly']),
+  body('target')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('Target must be a positive integer'),
+  body('color')
+    .optional()
+    .matches(/^#[0-9A-F]{6}$/i)
+    .withMessage('Color must be a valid hex color'),
+  body('reminder.enabled')
+    .optional()
+    .isBoolean(),
+  body('reminder.startTime')
+    .optional()
+    .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
+    .withMessage('Reminder start time must be in HH:MM format'),
+  body('reminder.endTime')
+    .optional()
+    .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
+    .withMessage('Reminder end time must be in HH:MM format'),
+  body('reminder.frequency')
+    .optional()
+    .isIn(['once', 'hourly', 'every-2-hours', 'every-4-hours']),
+  body('reminder.message')
+    .optional()
+    .isLength({ max: 200 })
+    .withMessage('Reminder message cannot exceed 200 characters')
+], async (req, res) => {
   try {
+    // Check validation errors
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
     const habitData = { ...req.body, user: req.userId };
     const habit = new Habit(habitData);
     await habit.save();
@@ -256,16 +313,74 @@ app.post('/api/habits', authenticateToken, async (req, res) => {
     res.status(201).json({ habit });
   } catch (error) {
     console.error('Create habit error:', error);
+    
+    // Handle specific validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ 
+        message: 'Validation failed', 
+        errors: validationErrors 
+      });
+    }
+    
     res.status(500).json({ message: 'Failed to create habit' });
   }
 });
 
-app.put('/api/habits/:id', authenticateToken, async (req, res) => {
+app.put('/api/habits/:id', [
+  authenticateToken,
+  body('name')
+    .optional()
+    .isLength({ max: 100 })
+    .withMessage('Habit name cannot exceed 100 characters'),
+  body('description')
+    .optional()
+    .isLength({ max: 500 })
+    .withMessage('Description cannot exceed 500 characters'),
+  body('category')
+    .optional()
+    .isIn(['health', 'fitness', 'learning', 'productivity', 'mindfulness', 'social', 'other', 'general']),
+  body('frequency')
+    .optional()
+    .isIn(['daily', 'weekly', 'monthly']),
+  body('target')
+    .optional()
+    .isInt({ min: 1 })
+    .withMessage('Target must be a positive integer'),
+  body('color')
+    .optional()
+    .matches(/^#[0-9A-F]{6}$/i)
+    .withMessage('Color must be a valid hex color'),
+  body('reminder.enabled')
+    .optional()
+    .isBoolean(),
+  body('reminder.startTime')
+    .optional()
+    .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
+    .withMessage('Reminder start time must be in HH:MM format'),
+  body('reminder.endTime')
+    .optional()
+    .matches(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
+    .withMessage('Reminder end time must be in HH:MM format'),
+  body('reminder.frequency')
+    .optional()
+    .isIn(['once', 'hourly', 'every-2-hours', 'every-4-hours']),
+  body('reminder.message')
+    .optional()
+    .isLength({ max: 200 })
+    .withMessage('Reminder message cannot exceed 200 characters')
+], async (req, res) => {
   try {
+    // Check validation errors
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
     const habit = await Habit.findOneAndUpdate(
       { _id: req.params.id, user: req.userId },
       req.body,
-      { new: true }
+      { new: true, runValidators: true }
     );
     if (!habit) {
       return res.status(404).json({ message: 'Habit not found' });
@@ -277,6 +392,16 @@ app.put('/api/habits/:id', authenticateToken, async (req, res) => {
     res.json({ habit });
   } catch (error) {
     console.error('Update habit error:', error);
+    
+    // Handle specific validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ 
+        message: 'Validation failed', 
+        errors: validationErrors 
+      });
+    }
+    
     res.status(500).json({ message: 'Failed to update habit' });
   }
 });
