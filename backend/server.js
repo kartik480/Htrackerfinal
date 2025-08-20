@@ -3,9 +3,39 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const http = require('http');
+const socketIo = require('socket.io');
 require('dotenv').config();
 
 const app = express();
+const server = http.createServer(app);
+const io = socketIo(server, {
+  cors: {
+    origin: "http://localhost:3000",
+    methods: ["GET", "POST"]
+  }
+});
+
+// WebSocket connection handling
+io.on('connection', (socket) => {
+  console.log('🔌 New client connected:', socket.id);
+  
+  // Join user to their personal room for real-time updates
+  socket.on('joinUser', (userId) => {
+    socket.join(`user_${userId}`);
+    console.log(`👤 User ${userId} joined their room`);
+  });
+  
+  socket.on('disconnect', () => {
+    console.log('🔌 Client disconnected:', socket.id);
+  });
+});
+
+// Helper function to emit real-time updates
+const emitToUser = (userId, event, data) => {
+  io.to(`user_${userId}`).emit(event, data);
+  console.log(`📡 Emitted ${event} to user ${userId}`);
+};
 
 // Middleware
 app.use(cors());
@@ -213,6 +243,10 @@ app.post('/api/habits', authenticateToken, async (req, res) => {
     const habitData = { ...req.body, user: req.userId };
     const habit = new Habit(habitData);
     await habit.save();
+    
+    // Emit real-time update
+    emitToUser(req.userId, 'habitCreated', { habit });
+    
     res.status(201).json({ habit });
   } catch (error) {
     console.error('Create habit error:', error);
@@ -230,6 +264,10 @@ app.put('/api/habits/:id', authenticateToken, async (req, res) => {
     if (!habit) {
       return res.status(404).json({ message: 'Habit not found' });
     }
+    
+    // Emit real-time update
+    emitToUser(req.userId, 'habitUpdated', { habit });
+    
     res.json({ habit });
   } catch (error) {
     console.error('Update habit error:', error);
@@ -243,6 +281,10 @@ app.delete('/api/habits/:id', authenticateToken, async (req, res) => {
     if (!habit) {
       return res.status(404).json({ message: 'Habit not found' });
     }
+    
+    // Emit real-time update
+    emitToUser(req.userId, 'habitDeleted', { habitId: req.params.id });
+    
     res.json({ message: 'Habit deleted successfully' });
   } catch (error) {
     console.error('Delete habit error:', error);
@@ -337,6 +379,9 @@ app.post('/api/progress', authenticateToken, async (req, res) => {
     // Populate the habit reference for the response
     await progress.populate('habit');
     
+    // Emit real-time update
+    emitToUser(req.userId, 'progressCreated', { progress });
+    
     res.status(201).json({ progress });
   } catch (error) {
     console.error('Create progress error:', error);
@@ -420,6 +465,9 @@ app.put('/api/progress/:id', authenticateToken, async (req, res) => {
     // Populate the habit reference for the response
     await progress.populate('habit');
     
+    // Emit real-time update
+    emitToUser(req.userId, 'progressUpdated', { progress });
+    
     res.json({ progress });
   } catch (error) {
     console.error('Update progress error:', error);
@@ -450,6 +498,10 @@ app.delete('/api/progress/:id', authenticateToken, async (req, res) => {
     if (!progress) {
       return res.status(404).json({ message: 'Progress not found' });
     }
+    
+    // Emit real-time update
+    emitToUser(req.userId, 'progressDeleted', { progressId: req.params.id });
+    
     res.json({ message: 'Progress deleted successfully' });
   } catch (error) {
     console.error('Delete progress error:', error);
@@ -459,10 +511,11 @@ app.delete('/api/progress/:id', authenticateToken, async (req, res) => {
 
 // Start server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📱 Health check: http://localhost:${PORT}/api/health`);
   console.log(`🔐 Auth endpoints: http://localhost:${PORT}/api/auth`);
   console.log(`🔑 JWT_SECRET: ${process.env.JWT_SECRET ? 'Set ✓' : 'Missing ✗'}`);
   console.log(`🗄️  MongoDB: ${process.env.MONGODB_URI ? 'Set ✓' : 'Missing ✗'}`);
+  console.log(`🔌 WebSocket server ready for real-time updates`);
 });
