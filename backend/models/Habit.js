@@ -39,8 +39,7 @@ const habitSchema = new mongoose.Schema({
   },
   color: {
     type: String,
-    default: '#3B82F6',
-    match: [/^#[0-9A-F]{6}$/i, 'Color must be a valid hex color']
+    default: '#3B82F6'
   },
   icon: {
     type: String,
@@ -53,53 +52,7 @@ const habitSchema = new mongoose.Schema({
   startDate: {
     type: Date,
     default: Date.now
-  },
-  endDate: {
-    type: Date
-  },
-  reminder: {
-    enabled: {
-      type: Boolean,
-      default: false
-    },
-    time: {
-      type: String,
-      default: '09:00'
-    },
-    days: [{
-      type: String,
-      enum: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-    }]
-  },
-  streak: {
-    current: {
-      type: Number,
-      default: 0
-    },
-    longest: {
-      type: Number,
-      default: 0
-    },
-    lastCompleted: {
-      type: Date
-    }
-  },
-  tags: [{
-    type: String,
-    trim: true,
-    maxlength: [20, 'Tag cannot exceed 20 characters']
-  }],
-  notes: [{
-    content: {
-      type: String,
-      trim: true,
-      maxlength: [1000, 'Note cannot exceed 1000 characters']
-    },
-    date: {
-      type: Date,
-      default: Date.now
-    }
-  }]
+  }
 }, {
   timestamps: true
 });
@@ -108,33 +61,5 @@ const habitSchema = new mongoose.Schema({
 habitSchema.index({ user: 1, isActive: 1 });
 habitSchema.index({ user: 1, category: 1 });
 habitSchema.index({ user: 1, startDate: -1 });
-
-// Virtual for habit age
-habitSchema.virtual('age').get(function() {
-  const now = new Date();
-  const start = this.startDate;
-  const diffTime = Math.abs(now - start);
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  return diffDays;
-});
-
-// Method to calculate completion rate
-habitSchema.methods.getCompletionRate = function() {
-  // This will be calculated based on progress entries
-  return 0;
-};
-
-// Method to update streak
-habitSchema.methods.updateStreak = function(completed) {
-  if (completed) {
-    this.streak.current += 1;
-    if (this.streak.current > this.streak.longest) {
-      this.streak.longest = this.streak.current;
-    }
-    this.streak.lastCompleted = new Date();
-  } else {
-    this.streak.current = 0;
-  }
-};
 
 module.exports = mongoose.model('Habit', habitSchema);

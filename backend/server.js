@@ -152,7 +152,7 @@ app.get('/api/auth/me', async (req, res) => {
 
 // Habit Schema
 const habitSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   name: { type: String, required: true },
   description: String,
   category: { type: String, default: 'General' },
@@ -170,8 +170,8 @@ const Habit = mongoose.model('Habit', habitSchema);
 
 // Progress Schema
 const progressSchema = new mongoose.Schema({
-  habitId: { type: mongoose.Schema.Types.ObjectId, ref: 'Habit', required: true },
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  habit: { type: mongoose.Schema.Types.ObjectId, ref: 'Habit', required: true },
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   date: { type: Date, required: true },
   value: { type: Number, required: true },
   notes: String,
@@ -200,7 +200,7 @@ const authenticateToken = (req, res, next) => {
 // Habits API
 app.get('/api/habits', authenticateToken, async (req, res) => {
   try {
-    const habits = await Habit.find({ userId: req.userId });
+    const habits = await Habit.find({ user: req.userId });
     res.json(habits);
   } catch (error) {
     console.error('Get habits error:', error);
@@ -210,7 +210,7 @@ app.get('/api/habits', authenticateToken, async (req, res) => {
 
 app.post('/api/habits', authenticateToken, async (req, res) => {
   try {
-    const habitData = { ...req.body, userId: req.userId };
+    const habitData = { ...req.body, user: req.userId };
     const habit = new Habit(habitData);
     await habit.save();
     res.status(201).json({ habit });
@@ -223,7 +223,7 @@ app.post('/api/habits', authenticateToken, async (req, res) => {
 app.put('/api/habits/:id', authenticateToken, async (req, res) => {
   try {
     const habit = await Habit.findOneAndUpdate(
-      { _id: req.params.id, userId: req.userId },
+      { _id: req.params.id, user: req.userId },
       req.body,
       { new: true }
     );
@@ -239,7 +239,7 @@ app.put('/api/habits/:id', authenticateToken, async (req, res) => {
 
 app.delete('/api/habits/:id', authenticateToken, async (req, res) => {
   try {
-    const habit = await Habit.findOneAndDelete({ _id: req.params.id, userId: req.userId });
+    const habit = await Habit.findOneAndDelete({ _id: req.params.id, user: req.userId });
     if (!habit) {
       return res.status(404).json({ message: 'Habit not found' });
     }
@@ -252,10 +252,10 @@ app.delete('/api/habits/:id', authenticateToken, async (req, res) => {
 
 app.get('/api/habits/stats/overview', authenticateToken, async (req, res) => {
   try {
-    const totalHabits = await Habit.countDocuments({ userId: req.userId });
-    const activeHabits = await Habit.countDocuments({ userId: req.userId, isActive: true });
+    const totalHabits = await Habit.countDocuments({ user: req.userId });
+    const activeHabits = await Habit.countDocuments({ user: req.userId, isActive: true });
     const completedToday = await Progress.countDocuments({
-      userId: req.userId,
+      user: req.userId,
       date: {
         $gte: new Date().setHours(0, 0, 0, 0),
         $lt: new Date().setHours(23, 59, 59, 999)
@@ -277,7 +277,7 @@ app.get('/api/habits/stats/overview', authenticateToken, async (req, res) => {
 // Progress API
 app.get('/api/progress', authenticateToken, async (req, res) => {
   try {
-    const progress = await Progress.find({ userId: req.userId }).populate('habitId');
+    const progress = await Progress.find({ user: req.userId }).populate('habit');
     res.json(progress);
   } catch (error) {
     console.error('Get progress error:', error);
@@ -287,36 +287,166 @@ app.get('/api/progress', authenticateToken, async (req, res) => {
 
 app.post('/api/progress', authenticateToken, async (req, res) => {
   try {
-    const progressData = { ...req.body, userId: req.userId };
+    const { habit, date, value, notes } = req.body;
+    
+    // Validate required fields
+    if (!habit || !date || value === undefined) {
+      return res.status(400).json({ 
+        message: 'Missing required fields: habit, date, and value are required' 
+      });
+    }
+    
+    // Convert date string to Date object if needed
+    let progressDate;
+    try {
+      progressDate = new Date(date);
+      if (isNaN(progressDate.getTime())) {
+        return res.status(400).json({ message: 'Invalid date format' });
+      }
+    } catch (error) {
+      return res.status(400).json({ message: 'Invalid date format' });
+    }
+    
+    // Check if progress already exists for this habit and date
+    const existingProgress = await Progress.findOne({
+      user: req.userId,
+      habit: habit,
+      date: {
+        $gte: new Date(progressDate.getFullYear(), progressDate.getMonth(), progressDate.getDate()),
+        $lt: new Date(progressDate.getFullYear(), progressDate.getMonth(), progressDate.getDate() + 1)
+      }
+    });
+    
+    if (existingProgress) {
+      return res.status(400).json({ 
+        message: 'Progress already exists for this habit and date' 
+      });
+    }
+    
+    const progressData = { 
+      user: req.userId,
+      habit: habit,
+      date: progressDate,
+      value: Number(value),
+      notes: notes || '',
+    };
+    
     const progress = new Progress(progressData);
     await progress.save();
+    
+    // Populate the habit reference for the response
+    await progress.populate('habit');
+    
     res.status(201).json({ progress });
   } catch (error) {
     console.error('Create progress error:', error);
+    
+    // Handle specific validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ 
+        message: 'Validation failed', 
+        errors: validationErrors 
+      });
+    }
+    
+    // Handle duplicate key errors
+    if (error.code === 11000) {
+      return res.status(400).json({ 
+        message: 'Progress already exists for this habit and date' 
+      });
+    }
+    
     res.status(500).json({ message: 'Failed to create progress' });
   }
 });
 
 app.put('/api/progress/:id', authenticateToken, async (req, res) => {
   try {
+    const { habit, date, value, notes } = req.body;
+    
+    // Validate required fields
+    if (!habit || !date || value === undefined) {
+      return res.status(400).json({ 
+        message: 'Missing required fields: habit, date, and value are required' 
+      });
+    }
+    
+    // Convert date string to Date object if needed
+    let progressDate;
+    try {
+      progressDate = new Date(date);
+      if (isNaN(progressDate.getTime())) {
+        return res.status(400).json({ message: 'Invalid date format' });
+      }
+    } catch (error) {
+      return res.status(400).json({ message: 'Invalid date format' });
+    }
+    
+    // Check if progress already exists for this habit and date (excluding current entry)
+    const existingProgress = await Progress.findOne({
+      _id: { $ne: req.params.id },
+      user: req.userId,
+      habit: habit,
+      date: {
+        $gte: new Date(progressDate.getFullYear(), progressDate.getMonth(), progressDate.getDate()),
+        $lt: new Date(progressDate.getFullYear(), progressDate.getMonth(), progressDate.getDate() + 1)
+      }
+    });
+    
+    if (existingProgress) {
+      return res.status(400).json({ 
+        message: 'Progress already exists for this habit and date' 
+      });
+    }
+    
+    const updateData = { 
+      habit: habit,
+      date: progressDate,
+      value: Number(value),
+      notes: notes || '',
+    };
+    
     const progress = await Progress.findOneAndUpdate(
-      { _id: req.params.id, userId: req.userId },
-      req.body,
-      { new: true }
+      { _id: req.params.id, user: req.userId },
+      updateData,
+      { new: true, runValidators: true }
     );
+    
     if (!progress) {
       return res.status(404).json({ message: 'Progress not found' });
     }
+    
+    // Populate the habit reference for the response
+    await progress.populate('habit');
+    
     res.json({ progress });
   } catch (error) {
     console.error('Update progress error:', error);
+    
+    // Handle specific validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      return res.status(400).json({ 
+        message: 'Validation failed', 
+        errors: validationErrors 
+      });
+    }
+    
+    // Handle duplicate key errors
+    if (error.code === 11000) {
+      return res.status(400).json({ 
+        message: 'Progress already exists for this habit and date' 
+      });
+    }
+    
     res.status(500).json({ message: 'Failed to update progress' });
   }
 });
 
 app.delete('/api/progress/:id', authenticateToken, async (req, res) => {
   try {
-    const progress = await Progress.findOneAndDelete({ _id: req.params.id, userId: req.userId });
+    const progress = await Progress.findOneAndDelete({ _id: req.params.id, user: req.userId });
     if (!progress) {
       return res.status(404).json({ message: 'Progress not found' });
     }
