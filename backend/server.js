@@ -23,7 +23,7 @@ io.on('connection', (socket) => {
   // Join user to their personal room for real-time updates
   socket.on('joinUser', (userId) => {
     socket.join(`user_${userId}`);
-    console.log(`👤 User ${userId} joined their room`);
+    console.log(`👤 User ${userId} joined their room: user_${userId}`);
   });
   
   socket.on('disconnect', () => {
@@ -33,6 +33,7 @@ io.on('connection', (socket) => {
 
 // Helper function to emit real-time updates
 const emitToUser = (userId, event, data) => {
+  console.log(`📡 Emitting ${event} to user ${userId}:`, data);
   io.to(`user_${userId}`).emit(event, data);
   console.log(`📡 Emitted ${event} to user ${userId}`);
 };
@@ -205,6 +206,11 @@ const progressSchema = new mongoose.Schema({
   date: { type: Date, required: true },
   value: { type: Number, required: true },
   notes: String,
+  completion: {
+    isCompleted: { type: Boolean, default: false },
+    completedAt: { type: Date, default: null },
+    completedTime: { type: String, default: null }
+  },
   createdAt: { type: Date, default: Date.now }
 });
 
@@ -331,6 +337,8 @@ app.post('/api/progress', authenticateToken, async (req, res) => {
   try {
     const { habit, date, value, notes } = req.body;
     
+    console.log('📝 Creating progress:', { habit, date, value, notes, userId: req.userId });
+    
     // Validate required fields
     if (!habit || !date || value === undefined) {
       return res.status(400).json({ 
@@ -349,6 +357,15 @@ app.post('/api/progress', authenticateToken, async (req, res) => {
       return res.status(400).json({ message: 'Invalid date format' });
     }
     
+    // Get the habit to check target value
+    const habitDoc = await Habit.findOne({ _id: habit, user: req.userId });
+    if (!habitDoc) {
+      console.log('❌ Habit not found:', { habit, userId: req.userId });
+      return res.status(400).json({ message: 'Habit not found' });
+    }
+    
+    console.log('✅ Habit found:', { habitId: habitDoc._id, name: habitDoc.name, target: habitDoc.target });
+    
     // Check if progress already exists for this habit and date
     const existingProgress = await Progress.findOne({
       user: req.userId,
@@ -359,30 +376,70 @@ app.post('/api/progress', authenticateToken, async (req, res) => {
       }
     });
     
+    console.log('🔍 Existing progress check:', { existingProgress: !!existingProgress, date: progressDate });
+    
+    let progress;
+    
     if (existingProgress) {
-      return res.status(400).json({ 
-        message: 'Progress already exists for this habit and date' 
-      });
+      // Update existing progress instead of blocking
+      const updateData = {
+        value: Number(value),
+        notes: notes || '',
+        // Auto-update completion status if target is reached
+        completion: {
+          isCompleted: Number(value) >= habitDoc.target,
+          completedAt: Number(value) >= habitDoc.target ? new Date() : undefined,
+          completedTime: Number(value) >= habitDoc.target ? new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }) : undefined
+        }
+      };
+      
+      progress = await Progress.findOneAndUpdate(
+        { _id: existingProgress._id },
+        updateData,
+        { new: true, runValidators: true }
+      );
+      
+      // Populate the habit reference for the response
+      await progress.populate('habit');
+      
+      // Emit real-time update
+      emitToUser(req.userId, 'progressUpdated', { progress });
+      
+      console.log('✅ Progress updated successfully:', { progressId: progress._id, value: progress.value, isCompleted: progress.completion?.isCompleted });
+      
+      res.json({ progress, message: 'Progress updated successfully' });
+    } else {
+      // Create new progress
+      const progressData = { 
+        user: req.userId,
+        habit: habit,
+        date: progressDate,
+        value: Number(value),
+        notes: notes || '',
+        // Auto-set completion status if target is reached
+        completion: {
+          isCompleted: Number(value) >= habitDoc.target,
+          completedAt: Number(value) >= habitDoc.target ? new Date() : undefined,
+          completedTime: Number(value) >= habitDoc.target ? new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }) : undefined
+        }
+      };
+      
+      console.log('📝 Creating new progress with data:', progressData);
+      
+      progress = new Progress(progressData);
+      await progress.save();
+      
+      // Populate the habit reference for the response
+      await progress.populate('habit');
+      
+      // Emit real-time update
+      emitToUser(req.userId, 'progressCreated', { progress });
+      
+      console.log('✅ Progress created successfully:', { progressId: progress._id, value: progress.value, isCompleted: progress.completion?.isCompleted });
+      
+      res.status(201).json({ progress, message: 'Progress created successfully' });
     }
     
-    const progressData = { 
-      user: req.userId,
-      habit: habit,
-      date: progressDate,
-      value: Number(value),
-      notes: notes || '',
-    };
-    
-    const progress = new Progress(progressData);
-    await progress.save();
-    
-    // Populate the habit reference for the response
-    await progress.populate('habit');
-    
-    // Emit real-time update
-    emitToUser(req.userId, 'progressCreated', { progress });
-    
-    res.status(201).json({ progress });
   } catch (error) {
     console.error('Create progress error:', error);
     
@@ -402,7 +459,7 @@ app.post('/api/progress', authenticateToken, async (req, res) => {
       });
     }
     
-    res.status(500).json({ message: 'Failed to create progress' });
+    res.status(500).json({ message: 'Failed to save progress' });
   }
 });
 
@@ -428,6 +485,12 @@ app.put('/api/progress/:id', authenticateToken, async (req, res) => {
       return res.status(400).json({ message: 'Invalid date format' });
     }
     
+    // Get the habit to check target value
+    const habitDoc = await Habit.findOne({ _id: habit, user: req.userId });
+    if (!habitDoc) {
+      return res.status(400).json({ message: 'Habit not found' });
+    }
+    
     // Check if progress already exists for this habit and date (excluding current entry)
     const existingProgress = await Progress.findOne({
       _id: { $ne: req.params.id },
@@ -450,6 +513,12 @@ app.put('/api/progress/:id', authenticateToken, async (req, res) => {
       date: progressDate,
       value: Number(value),
       notes: notes || '',
+      // Auto-update completion status if target is reached
+      completion: {
+        isCompleted: Number(value) >= habitDoc.target,
+        completedAt: Number(value) >= habitDoc.target ? new Date() : undefined,
+        completedTime: Number(value) >= habitDoc.target ? new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }) : undefined
+      }
     };
     
     const progress = await Progress.findOneAndUpdate(
@@ -506,6 +575,45 @@ app.delete('/api/progress/:id', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Delete progress error:', error);
     res.status(500).json({ message: 'Failed to delete progress' });
+  }
+});
+
+// Toggle completion status for a progress entry
+app.patch('/api/progress/:id/toggle-completion', authenticateToken, async (req, res) => {
+  try {
+    const progress = await Progress.findOne({ _id: req.params.id, user: req.userId });
+    if (!progress) {
+      return res.status(404).json({ message: 'Progress not found' });
+    }
+
+    // Toggle completion status
+    const newCompletionStatus = !progress.completion.isCompleted;
+    
+    const updateData = {
+      'completion.isCompleted': newCompletionStatus,
+      'completion.completedAt': newCompletionStatus ? new Date() : undefined,
+      'completion.completedTime': newCompletionStatus ? new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }) : undefined
+    };
+
+    const updatedProgress = await Progress.findOneAndUpdate(
+      { _id: req.params.id, user: req.userId },
+      { $set: updateData },
+      { new: true, runValidators: true }
+    );
+
+    // Populate the habit reference for the response
+    await updatedProgress.populate('habit');
+
+    // Emit real-time update
+    emitToUser(req.userId, 'progressUpdated', { progress: updatedProgress });
+
+    res.json({ 
+      progress: updatedProgress,
+      message: `Progress ${newCompletionStatus ? 'marked as completed' : 'marked as incomplete'}`
+    });
+  } catch (error) {
+    console.error('Toggle completion error:', error);
+    res.status(500).json({ message: 'Failed to toggle completion status' });
   }
 });
 
